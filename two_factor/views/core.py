@@ -186,6 +186,9 @@ class LoginView(SuccessURLAllowedHostsMixin, IdempotentSessionWizardView):
                                     samesite=getattr(settings, 'TWO_FACTOR_REMEMBER_COOKIE_SAMESITE', 'Lax'),
                                     )
 
+        else:
+            return redirect('two_factor:setup')
+        
         return response
 
     # Copied from django.conrib.auth.views.LoginView (Branch: stable/1.11.x)
