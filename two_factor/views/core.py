@@ -181,6 +181,8 @@ class LoginView(RedirectURLMixin, IdempotentSessionWizardView):
                                     httponly=getattr(settings, 'TWO_FACTOR_REMEMBER_COOKIE_HTTPONLY', True),
                                     samesite=getattr(settings, 'TWO_FACTOR_REMEMBER_COOKIE_SAMESITE', 'Lax'),
                                     )
+        else:
+            return redirect('two_factor:setup')
 
         return response
 
@@ -647,6 +649,10 @@ class QRGeneratorView(View):
             username = self.request.user.get_username()
         except AttributeError:
             username = self.request.user.username
+
+        # Check if username is string (which is the case for Phonenumbers)
+        if type(username) != str:
+            username = str(username)
 
         otpauth_url = get_otpauth_url(accountname=username,
                                       issuer=self.get_issuer(),
