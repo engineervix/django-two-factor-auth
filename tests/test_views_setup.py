@@ -1,13 +1,14 @@
+from base64 import b32decode
 from binascii import unhexlify
 from unittest import mock
 
 from django.test import TestCase
-from django.test.utils import modify_settings, override_settings
+from django.test.utils import override_settings
 from django.urls import reverse
 from django_otp import DEVICE_ID_SESSION_KEY
 from django_otp.oath import totp
 
-from .utils import UserMixin
+from .utils import UserMixin, method_registry
 
 
 class SetupTest(UserMixin, TestCase):
@@ -21,9 +22,7 @@ class SetupTest(UserMixin, TestCase):
         self.assertContains(response, 'Follow the steps in this wizard to '
                                       'enable two-factor')
 
-    @modify_settings(INSTALLED_APPS={
-        'remove': ['otp_yubikey'],
-    })
+    @method_registry(['generator'])
     def test_setup_only_generator_available(self):
         response = self.client.post(
             reverse('two_factor:setup'),
@@ -35,6 +34,16 @@ class SetupTest(UserMixin, TestCase):
         self.assertContains(response, 'autocomplete="one-time-code"')
         session = self.client.session
         self.assertIn('django_two_factor-qr_secret_key', session.keys())
+
+        # test if secret key is valid base32 and has the correct number of bytes
+        secret_key = response.context_data['secret_key']
+        self.assertEqual(len(b32decode(secret_key)), 20)
+        self.assertEqual(
+            response.context_data['otpauth_url'],
+            f'otpauth://totp/testserver%3A%20bouke%40example.com?secret={secret_key}&digits=6&issuer=testserver'
+        )
+        self.assertEqual(response.context_data['issuer'], 'testserver')
+        self.assertEqual(response.context_data['totp_digits'], 6)
 
         response = self.client.post(
             reverse('two_factor:setup'),

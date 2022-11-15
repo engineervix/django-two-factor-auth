@@ -1,17 +1,20 @@
 import json
+from importlib import import_module
 from time import sleep
 from unittest import mock
 
 from django.conf import settings
 from django.shortcuts import resolve_url
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.test.utils import override_settings
 from django.urls import reverse
 from django_otp import DEVICE_ID_SESSION_KEY
 from django_otp.oath import totp
 from django_otp.util import random_hex
 
-from .utils import UserMixin
+from two_factor.views.core import LoginView
+
+from .utils import UserMixin, totp_str
 
 
 class LoginTest(UserMixin, TestCase):
@@ -42,6 +45,16 @@ class LoginTest(UserMixin, TestCase):
 
     def test_valid_login_with_custom_redirect(self):
         redirect_url = reverse('two_factor:setup')
+        self.create_user()
+        response = self.client.post(
+            '%s?%s' % (reverse('two_factor:login'), 'next=' + redirect_url),
+            {'auth-username': 'bouke@example.com',
+             'auth-password': 'secret',
+             'login_view-current_step': 'auth'})
+        self.assertRedirects(response, redirect_url)
+
+    def test_valid_login_non_class_based_redirect(self):
+        redirect_url = reverse('plain')
         self.create_user()
         response = self.client.post(
             '%s?%s' % (reverse('two_factor:login'), 'next=' + redirect_url),
@@ -146,7 +159,7 @@ class LoginTest(UserMixin, TestCase):
 
         mock_time.time.return_value = 20345.12
 
-        response = self._post({'token-otp_token': totp(device.bin_key),
+        response = self._post({'token-otp_token': totp_str(device.bin_key),
                                'login_view-current_step': 'token'})
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, 'Token:')
@@ -179,7 +192,7 @@ class LoginTest(UserMixin, TestCase):
 
         mock_time.time.return_value = 20345.12
 
-        response = self._post({'token-otp_token': totp(device.bin_key),
+        response = self._post({'token-otp_token': totp_str(device.bin_key),
                                'login_view-current_step': 'token'})
         self.assertRedirects(response, resolve_url(settings.LOGIN_REDIRECT_URL))
         self.assertEqual(self.client.session['_auth_user_id'], str(user.pk))
@@ -216,7 +229,7 @@ class LoginTest(UserMixin, TestCase):
                                'login_view-current_step': 'auth'})
         self.assertContains(response, 'Token:')
         self.assertContains(response, 'autofocus="autofocus"')
-        self.assertContains(response, 'inputmode="numeric"')
+        self.assertContains(response, 'pattern="[0-9]*"')
         self.assertContains(response, 'autocomplete="one-time-code"')
 
         response = self._post({'token-otp_token': '123456',
@@ -228,7 +241,7 @@ class LoginTest(UserMixin, TestCase):
         # reset throttle because we're not testing that
         device.throttle_reset()
 
-        response = self._post({'token-otp_token': totp(device.bin_key),
+        response = self._post({'token-otp_token': totp_str(device.bin_key),
                                'login_view-current_step': 'token'})
         self.assertRedirects(response, resolve_url(settings.LOGIN_REDIRECT_URL))
 
@@ -251,7 +264,7 @@ class LoginTest(UserMixin, TestCase):
         # throttle device
         device.throttle_increment()
 
-        response = self._post({'token-otp_token': totp(device.bin_key),
+        response = self._post({'token-otp_token': totp_str(device.bin_key),
                                'login_view-current_step': 'token'})
         self.assertEqual(response.context_data['wizard']['form'].errors,
                          {'__all__': ['Invalid token. Please make sure you '
@@ -312,7 +325,7 @@ class LoginTest(UserMixin, TestCase):
                                for i in [-1, 0]])
 
             # Valid token should be accepted.
-            response = self._post({'token-otp_token': totp(device.bin_key),
+            response = self._post({'token-otp_token': totp_str(device.bin_key),
                                    'login_view-current_step': 'token'})
             self.assertRedirects(response, resolve_url(settings.LOGIN_REDIRECT_URL))
             self.assertEqual(device.persistent_id,
@@ -428,18 +441,37 @@ class LoginTest(UserMixin, TestCase):
         response = self._post({'auth-username': 'bouke@example.com',
                                'auth-password': 'secret',
                                'login_view-current_step': 'auth'})
-        self.assertRedirects(response,
-                             resolve_url(settings.LOGIN_REDIRECT_URL))
+        self.assertRedirects(response, resolve_url(settings.LOGIN_REDIRECT_URL))
 
         response = self._post({'auth-username': 'vedran@example.com',
                                'auth-password': 'secret',
                                'login_view-current_step': 'auth'})
         self.assertContains(response, 'Token:')
-        response = self._post({'token-otp_token': totp(device.bin_key),
+        response = self._post({'token-otp_token': totp_str(device.bin_key),
                                'login_view-current_step': 'token',
                                'token-remember': 'on'})
         self.assertRedirects(response,
                              resolve_url(settings.LOGIN_REDIRECT_URL))
+
+    def test_login_view_is_step_visible(self):
+        request = RequestFactory().get(reverse('login'))
+        engine = import_module(settings.SESSION_ENGINE)
+        request.session = engine.SessionStore(None)
+        login_view = LoginView(**LoginView.get_initkwargs())
+        login_view.setup(request)
+        login_view.dispatch(request)
+
+        # Initially, any step is visible
+        for step, form_class in login_view.form_list.items():
+            self.assertTrue(login_view.is_step_visible(step, form_class))
+        login_view.storage.validated_step_data['auth'] = {'username': 'joe', 'password': 'any'}
+        login_view.storage.validated_step_data['token'] = {'otp_token': '123456'}
+        # Once token was entered, the token step is no longer visible
+        for step, form_class in login_view.form_list.items():
+            if step == 'token':
+                self.assertFalse(login_view.is_step_visible(step, form_class))
+            else:
+                self.assertTrue(login_view.is_step_visible(step, form_class))
 
 
 class BackupTokensTest(UserMixin, TestCase):
@@ -519,9 +551,10 @@ class RememberLoginTest(UserMixin, TestCase):
                                'login_view-current_step': 'auth'})
         self.assertContains(response, 'Token:')
 
-        response = self._post({'token-otp_token': totp(self.device.bin_key),
+        response = self._post({'token-otp_token': totp_str(self.device.bin_key),
                                'login_view-current_step': 'token',
                                'token-remember': 'on'})
+        self.assertRedirects(response, reverse('two_factor:profile'), fetch_redirect_response=False)
         self.assertEqual(1, len([cookie for cookie in response.cookies if cookie.startswith('remember-cookie_')]))
 
         # Logout
@@ -569,7 +602,7 @@ class RememberLoginTest(UserMixin, TestCase):
                                'login_view-current_step': 'auth'})
         self.assertContains(response, 'Token:')
 
-        response = self._post({'token-otp_token': totp(self.device.bin_key),
+        response = self._post({'token-otp_token': totp_str(self.device.bin_key),
                                'login_view-current_step': 'token'})
         self.assertEqual(0, len([cookie for cookie in response.cookies if cookie.startswith('remember-cookie_')]))
 
@@ -593,7 +626,7 @@ class RememberLoginTest(UserMixin, TestCase):
                                'login_view-current_step': 'auth'})
         self.assertContains(response, 'Token:')
 
-        response = self._post({'token-otp_token': totp(self.device.bin_key),
+        response = self._post({'token-otp_token': totp_str(self.device.bin_key),
                                'login_view-current_step': 'token',
                                'token-remember': 'on'})
         self.assertEqual(1, len([cookie for cookie in response.cookies if cookie.startswith('remember-cookie_')]))
@@ -625,7 +658,7 @@ class RememberLoginTest(UserMixin, TestCase):
                                'login_view-current_step': 'auth'})
         self.assertContains(response, 'Token:')
 
-        response = self._post({'token-otp_token': totp(self.device.bin_key),
+        response = self._post({'token-otp_token': totp_str(self.device.bin_key),
                                'login_view-current_step': 'token',
                                'token-remember': 'on'})
         self.assertEqual(1, len([cookie for cookie in response.cookies if cookie.startswith('remember-cookie_')]))
@@ -637,7 +670,7 @@ class RememberLoginTest(UserMixin, TestCase):
 
         self.set_invalid_remember_cookie()
 
-        # Login but exired remember cookie
+        # Login but expire remember cookie
         response = self._post({'auth-username': 'bouke@example.com',
                                'auth-password': 'secret',
                                'login_view-current_step': 'auth'})
@@ -649,7 +682,7 @@ class RememberLoginTest(UserMixin, TestCase):
         OTP_HOTP_THROTTLE_FACTOR=60 * 60,
         OTP_TOTP_THROTTLE_FACTOR=60 * 60,
     )
-    def test_remeber_token_throttling(self):
+    def test_remember_token_throttling(self):
         # Login
         response = self._post({'auth-username': 'bouke@example.com',
                                'auth-password': 'secret',
@@ -657,7 +690,7 @@ class RememberLoginTest(UserMixin, TestCase):
         self.assertContains(response, 'Token:')
 
         # Enter token
-        response = self._post({'token-otp_token': totp(self.device.bin_key),
+        response = self._post({'token-otp_token': totp_str(self.device.bin_key),
                                'login_view-current_step': 'token',
                                'token-remember': 'on'})
         self.assertEqual(1, len([cookie for cookie in response.cookies if cookie.startswith('remember-cookie_')]))
@@ -712,7 +745,7 @@ class RememberLoginTest(UserMixin, TestCase):
         self.assertEqual(test_call_kwargs['device'], device)
 
         # Valid token should be accepted.
-        response = self._post({'token-otp_token': totp(device.bin_key),
+        response = self._post({'token-otp_token': totp_str(device.bin_key),
                                'login_view-current_step': 'token',
                                'token-remember': 'on'})
         self.assertRedirects(response, resolve_url(settings.LOGIN_REDIRECT_URL))

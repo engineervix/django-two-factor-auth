@@ -8,13 +8,20 @@ from django.conf import settings
 from django.contrib.auth import load_backend
 from django.core.exceptions import SuspiciousOperation
 from django.core.signing import BadSignature, SignatureExpired
-from django.utils import baseconv
 from django.utils.decorators import method_decorator
 from django.utils.encoding import force_bytes
 from django.utils.translation import gettext as _
 from formtools.wizard.forms import ManagementForm
 from formtools.wizard.storage.session import SessionStorage
 from formtools.wizard.views import SessionWizardView
+
+try:
+    from django.core.signing import b62_decode, b62_encode
+except ImportError:  # Django < 4.0
+    # Deprecated in Django 4.0, removed in Django 5.0
+    from django.utils import baseconv
+    b62_decode = baseconv.base62.decode
+    b62_encode = baseconv.base62.encode
 
 logger = logging.getLogger(__name__)
 
@@ -79,14 +86,13 @@ class IdempotentSessionWizardView(SessionWizardView):
     case the form is only validated once and the cleaned values stored.
     """
     storage_name = 'two_factor.views.utils.ExtraSessionStorage'
-    idempotent_dict = {}
 
-    def is_step_visible(self, step):
+    def is_step_visible(self, step, form_class):
         """
         Returns whether the given `step` should be included in the wizard; it
         is included if either the form is idempotent or not filled in before.
         """
-        return self.idempotent_dict.get(step, True) or \
+        return getattr(form_class, 'idempotent', True) or \
             step not in self.storage.validated_step_data
 
     def get_prev_step(self, step=None):
@@ -102,7 +108,7 @@ class IdempotentSessionWizardView(SessionWizardView):
         key = keys.index(step) - 1
         if key >= 0:
             for prev_step in keys[key::-1]:
-                if self.is_step_visible(prev_step):
+                if self.is_step_visible(prev_step, form_list[prev_step]):
                     return prev_step
         return None
 
@@ -118,7 +124,7 @@ class IdempotentSessionWizardView(SessionWizardView):
         keys = list(form_list.keys())
         key = keys.index(step) + 1
         for next_step in keys[key:]:
-            if self.is_step_visible(next_step):
+            if self.is_step_visible(next_step, form_list[next_step]):
                 return next_step
         return None
 
@@ -206,7 +212,7 @@ class IdempotentSessionWizardView(SessionWizardView):
                                      data=self.storage.get_step_data(form_key),
                                      files=self.storage.get_step_files(
                                          form_key))
-            if not (form_key in self.idempotent_dict or form_obj.is_valid()):
+            if getattr(form_obj, 'idempotent', True) and not form_obj.is_valid():
                 return self.render_revalidation_failure(form_key, form_obj,
                                                         **kwargs)
             final_form_list.append(form_obj)
@@ -248,7 +254,7 @@ def get_remember_device_cookie(user, otp_device_id):
     2. A hashed value of otp_device_id and the timestamp.
     3. A hashed value of user.pk, user.password, otp_device_id and the timestamp.
     """
-    timestamp = baseconv.base62.encode(int(time.time()))
+    timestamp = b62_encode(int(time.time()))
     cookie_key = hash_remember_device_cookie_key(otp_device_id)
     cookie_value = hash_remember_device_cookie_value(otp_device_id, user, timestamp)
 
@@ -274,7 +280,7 @@ def validate_remember_device_cookie(cookie, user, otp_device_id):
     if input_cookie_value != cookie_value:
         raise BadSignature('Signature does not match')
 
-    timestamp_int = baseconv.base62.decode(timestamp)
+    timestamp_int = b62_decode(timestamp)
     age = time.time() - timestamp_int
     if age > settings.TWO_FACTOR_REMEMBER_COOKIE_AGE:
         raise SignatureExpired(

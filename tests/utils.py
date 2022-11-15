@@ -1,9 +1,12 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.shortcuts import resolve_url
+from django.test.utils import TestContextDecorator
 from django_otp import DEVICE_ID_SESSION_KEY
+from django_otp.oath import totp
 
-from two_factor.utils import default_device
+from two_factor.plugins.registry import registry
+from two_factor.utils import default_device, totp_digits
 
 
 class UserMixin:
@@ -40,3 +43,21 @@ class UserMixin:
         if user is None:
             user = list(self._passwords.keys())[0]
         return user.totpdevice_set.create(name='default')
+
+
+class method_registry(TestContextDecorator):
+    def __init__(self, method_codes):
+        self.codes = method_codes
+        super().__init__()
+
+    def enable(self):
+        # We count on the fact that initially registry._methods is full (default test settings)
+        self.old_methods = registry._methods
+        registry._methods = [m for m in self.old_methods if m.code in self.codes]
+
+    def disable(self):
+        registry._methods = self.old_methods
+
+
+def totp_str(key):
+    return str(totp(key)).zfill(totp_digits())

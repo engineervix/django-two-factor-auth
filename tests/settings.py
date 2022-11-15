@@ -5,6 +5,11 @@ try:
 except ImportError:
     otp_yubikey = None
 
+try:
+    import webauthn
+except ImportError:
+    webauthn = None
+
 BASE_DIR = os.path.dirname(__file__)
 
 SECRET_KEY = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'
@@ -18,12 +23,18 @@ INSTALLED_APPS = [
     'django_otp',
     'django_otp.plugins.otp_static',
     'django_otp.plugins.otp_totp',
+    'django_otp.plugins.otp_email',
     'two_factor',
+    'two_factor.plugins.email',
+    'two_factor.plugins.phonenumber',
     'tests',
 ]
 
 if otp_yubikey:
-    INSTALLED_APPS += ['otp_yubikey']
+    INSTALLED_APPS.extend(['otp_yubikey', 'two_factor.plugins.yubikey'])
+
+if webauthn:
+    INSTALLED_APPS.extend(['two_factor.plugins.webauthn'])
 
 MIDDLEWARE = (
     'django.middleware.common.CommonMiddleware',
@@ -36,6 +47,8 @@ MIDDLEWARE = (
 )
 
 ROOT_URLCONF = 'tests.urls'
+
+STATIC_URL = '/static/'
 
 LOGIN_URL = 'two_factor:login'
 LOGIN_REDIRECT_URL = 'two_factor:profile'
@@ -74,7 +87,14 @@ TEMPLATES = [
     },
 ]
 
+DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
+
 TWO_FACTOR_PATCH_ADMIN = False
+
+TWO_FACTOR_WEBAUTHN_RP_NAME = 'Test Server'
 
 AUTH_USER_MODEL = os.environ.get('AUTH_USER_MODEL', 'auth.User')
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+
+EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+DEFAULT_FROM_EMAIL = 'test@test.org'

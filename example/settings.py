@@ -52,7 +52,7 @@ TEMPLATES = [
     },
 ]
 
-INSTALLED_APPS = (
+INSTALLED_APPS = [
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'user_sessions',
@@ -63,11 +63,12 @@ INSTALLED_APPS = (
     'django_otp.plugins.otp_static',
     'django_otp.plugins.otp_totp',
     'two_factor',
+    'two_factor.plugins.phonenumber',
     'example',
 
     'debug_toolbar',
     'bootstrapform'
-)
+]
 
 
 LOGOUT_REDIRECT_URL = 'home'
@@ -99,9 +100,12 @@ PHONENUMBER_DEFAULT_REGION = 'NL'
 
 TWO_FACTOR_REMEMBER_COOKIE_AGE = 120  # Set to 2 minute for testing
 
+TWO_FACTOR_WEBAUTHN_RP_NAME = 'Demo Application'
+
 SESSION_ENGINE = 'user_sessions.backends.db'
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'webmaster@example.org'
 
 SILENCED_SYSTEM_CHECKS = ['admin.E410']
 

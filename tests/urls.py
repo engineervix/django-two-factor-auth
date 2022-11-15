@@ -5,9 +5,14 @@ from two_factor.gateways.twilio.urls import urlpatterns as tf_twilio_urls
 from two_factor.urls import urlpatterns as tf_urls
 from two_factor.views import LoginView
 
-from .views import SecureView
+from .views import SecureView, plain_view
 
 urlpatterns = [
+    path(
+        'account/login/',
+        LoginView.as_view(),
+        name='login',
+    ),
     path(
         'account/logout/',
         LogoutView.as_view(),
@@ -33,6 +38,11 @@ urlpatterns = [
         name='custom-redirect-authenticated-user-login',
     ),
 
+    path(
+        'plain/',
+        plain_view,
+        name="plain",
+    ),
     path(
         'secure/',
         SecureView.as_view(),

@@ -3,56 +3,27 @@ from time import time
 
 from django import forms
 from django.conf import settings
-from django.forms import Form, ModelForm
 from django.utils.translation import gettext_lazy as _
 from django_otp.forms import OTPAuthenticationFormMixin
 from django_otp.oath import totp
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
-from .models import (
-    PhoneDevice, get_available_methods, get_available_phone_methods,
-)
+from .plugins.registry import registry
 from .utils import totp_digits
-from .validators import validate_international_phonenumber
-
-try:
-    from otp_yubikey.models import RemoteYubikeyDevice, YubikeyDevice
-except ImportError:
-    RemoteYubikeyDevice = YubikeyDevice = None
 
 
 class MethodForm(forms.Form):
     method = forms.ChoiceField(label=_("Method"),
-                               initial='generator',
                                widget=forms.RadioSelect)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.fields['method'].choices = get_available_methods()
 
-
-class PhoneNumberMethodForm(ModelForm):
-    number = forms.CharField(label=_("Phone Number"),
-                             validators=[validate_international_phonenumber])
-    method = forms.ChoiceField(widget=forms.RadioSelect, label=_('Method'))
-
-    class Meta:
-        model = PhoneDevice
-        fields = 'number', 'method',
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.fields['method'].choices = get_available_phone_methods()
-
-
-class PhoneNumberForm(ModelForm):
-    # Cannot use PhoneNumberField, as it produces a PhoneNumber object, which cannot be serialized.
-    number = forms.CharField(label=_("Phone Number"),
-                             validators=[validate_international_phonenumber])
-
-    class Meta:
-        model = PhoneDevice
-        fields = 'number',
+        method = self.fields['method']
+        method.choices = [
+            (m.code, m.verbose_name) for m in registry.get_methods()
+        ]
+        method.initial = method.choices[0][0]
 
 
 class DeviceValidationForm(forms.Form):
@@ -65,8 +36,8 @@ class DeviceValidationForm(forms.Form):
         'invalid_token': _('Entered token is not valid.'),
     }
 
-    def __init__(self, device, **args):
-        super().__init__(**args)
+    def __init__(self, device, **kwargs):
+        super().__init__(**kwargs)
         self.device = device
 
     def clean_token(self):
@@ -74,18 +45,6 @@ class DeviceValidationForm(forms.Form):
         if not self.device.verify_token(token):
             raise forms.ValidationError(self.error_messages['invalid_token'])
         return token
-
-
-class YubiKeyDeviceForm(DeviceValidationForm):
-    token = forms.CharField(label=_("YubiKey"), widget=forms.PasswordInput())
-
-    error_messages = {
-        'invalid_token': _("The YubiKey could not be verified."),
-    }
-
-    def clean_token(self):
-        self.device.public_id = self.cleaned_data['token'][:-32]
-        return super().clean_token()
 
 
 class TOTPDeviceForm(forms.Form):
@@ -146,13 +105,16 @@ class DisableForm(forms.Form):
     understand = forms.BooleanField(label=_("Yes, I am sure"))
 
 
-class AuthenticationTokenForm(OTPAuthenticationFormMixin, Form):
-    otp_token = forms.IntegerField(label=_("Token"), min_value=1,
-                                   max_value=int('9' * totp_digits()))
-
-    otp_token.widget.attrs.update({'autofocus': 'autofocus',
-                                   'inputmode': 'numeric',
-                                   'autocomplete': 'one-time-code'})
+class AuthenticationTokenForm(OTPAuthenticationFormMixin, forms.Form):
+    otp_token = forms.RegexField(label=_("Token"),
+                                 regex=r'^[0-9]*$',
+                                 min_length=totp_digits(),
+                                 max_length=totp_digits())
+    otp_token.widget.attrs.update({
+        'autofocus': 'autofocus',
+        'pattern': '[0-9]*',  # hint to show numeric keyboard for on-screen keyboards
+        'autocomplete': 'one-time-code',
+    })
 
     # Our authentication form has an additional submit button to go to the
     # backup token form. When the `required` attribute is set on an input
@@ -161,6 +123,7 @@ class AuthenticationTokenForm(OTPAuthenticationFormMixin, Form):
     # solution would be to move the button outside the `<form>` and into
     # its own `<form>`.
     use_required_attribute = False
+    idempotent = False
 
     def __init__(self, user, initial_device, **kwargs):
         """
@@ -171,15 +134,9 @@ class AuthenticationTokenForm(OTPAuthenticationFormMixin, Form):
         """
         super().__init__(**kwargs)
         self.user = user
+        self.initial_device = initial_device
 
-        # YubiKey generates a OTP of 44 characters (not digits). So if the
-        # user's primary device is a YubiKey, replace the otp_token
-        # IntegerField with a CharField.
-        if RemoteYubikeyDevice and YubikeyDevice and \
-                isinstance(initial_device, (RemoteYubikeyDevice, YubikeyDevice)):
-            self.fields['otp_token'] = forms.CharField(label=_('YubiKey'), widget=forms.PasswordInput())
-
-        # Add a field to remeber this browser.
+        # Add a field to remember this browser.
         if getattr(settings, 'TWO_FACTOR_REMEMBER_COOKIE_AGE', None):
             if settings.TWO_FACTOR_REMEMBER_COOKIE_AGE < 3600:
                 minutes = int(settings.TWO_FACTOR_REMEMBER_COOKIE_AGE / 60)

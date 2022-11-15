@@ -1,7 +1,46 @@
+# Changelog
+
 ## Unreleased
 
 ### Added
+- Enforcing a redirect to setup of otp device when none available for user [#550](https://github.com/jazzband/django-two-factor-auth/pull/500)
+- Confirmed Django 4.1 support
+- WebAuthn support
+- Confirmed Python 3.11 support
+
+### Removed
+- Django 2.2, 3.0, and 3.1 support
+
+### Changed 
+
+- display the TOTP secret key alongside the QR code to streamline setup for 
+  password managers without QR support. 
+
+## 1.14.0
+
+### Added
 - Python 3.10 support
+- The setup view got a new `secret_key` context variable to be able to display
+  that key elsewhere than in the QR code.
+- The token/device forms have now an `idempotent` class variable to tell if the
+  form can validate more than once with the same input data.
+- A new email plugin (based on django_otp `EmailDevice`) can now be activated
+  and used to communicate the second factor token by email.
+
+### Changed
+- BREAKING: The phone capability moved to a plugins folder, so if you use that
+  capability and want to keep it, you should add `two_factor.plugins.phonenumber`
+  line in your `INSTALLED_APPS` setting. Additionally, as the `two_factor`
+  templatetags library was only containing phone-related filters, the library
+  was renamed to `phonenumber`.
+- default_device utility function now caches the found device on the given user
+  object.
+- The `otp_token` form field for `AuthenticationTokenForm` is now a Django
+  `RegexField` instead of an `IntegerField`.
+- The Twilio gateway content for phone interaction is now template-based, and
+  the pause between digits is now using the `<Pause>` tag.
+- The QR code now always uses a white background to support pages displayed
+  with a dark theme.
 
 ### Removed
 - Python 3.5 and 3.6 support

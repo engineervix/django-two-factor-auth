@@ -1,5 +1,3 @@
-TARGET?=tests
-
 .PHONY: docs flake8 example test coverage migrations
 
 docs:
@@ -11,6 +9,14 @@ flake8:
 
 example:
 	DJANGO_SETTINGS_MODULE=example.settings PYTHONPATH=. \
+		django-admin migrate
+	DJANGO_SETTINGS_MODULE=example.settings PYTHONPATH=. \
+		django-admin runserver
+
+example-webauthn:
+	DJANGO_SETTINGS_MODULE=example.settings_webauthn PYTHONPATH=. \
+		django-admin migrate
+	DJANGO_SETTINGS_MODULE=example.settings_webauthn PYTHONPATH=. \
 		django-admin runserver
 
 test:
@@ -24,7 +30,7 @@ migrations:
 coverage:
 	coverage erase
 	DJANGO_SETTINGS_MODULE=tests.settings PYTHONPATH=. \
-		coverage run ---parallel --source=two_factor \
+		coverage run --parallel --source=two_factor \
 		`which django-admin` test ${TARGET}
 	coverage combine
 	coverage html
@@ -36,6 +42,6 @@ tx-pull:
 	cd example; django-admin compilemessages
 
 tx-push:
-	cd two_factor; django-admin makemessages -l en
-	cd example; django-admin makemessages -l en
+	cd two_factor; django-admin makemessages -l en -e html,txt,py,xml
+	cd example; django-admin makemessages -l en -e html,txt,py,xml
 	tx push -s
